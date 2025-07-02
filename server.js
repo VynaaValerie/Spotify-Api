@@ -7,12 +7,18 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Check for required environment variables
+if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
+  console.error('Missing Spotify API credentials. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables.');
+  process.exit(1);
+}
+
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Spotify API credentials from environment variables
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID || 'ac7ac28ff4a1403093e14bf798016520';
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET || 'eab8602d965542b1bea8107f20e122ff';
+// Spotify API credentials
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 let accessToken = '';
 let tokenExpiration = 0;
 
@@ -36,6 +42,7 @@ async function getSpotifyToken() {
     tokenExpiration = Date.now() + (response.data.expires_in * 1000);
   } catch (error) {
     console.error('Error getting Spotify token:', error);
+    throw new Error('Failed to authenticate with Spotify API');
   }
 }
 
@@ -79,4 +86,5 @@ app.get('*', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
+  console.log(`Spotify Client ID: ${SPOTIFY_CLIENT_ID ? 'Configured' : 'Missing'}`);
 });
