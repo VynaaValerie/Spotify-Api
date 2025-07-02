@@ -35,77 +35,135 @@ mongoose.connect(uri, {
 }).then(() => {
   console.log("✅ MongoDB connected");
 }).catch(err => {
-  console.error("❌ Gagal konek MongoDB:", err);
+  console.error("❌ MongoDB connection error:", err);
 });
 
-// Mongoose Chat Schema
+// Enhanced Chat Schema
 const chatSchema = new mongoose.Schema({
-  roomId: String,
-  senderId: String,
-  senderName: String,
-  message: String,
-  type: { type: String, default: "text" },
-  timestamp: { type: Date, default: Date.now },
-  seenBy: [String]
-});
+  roomId: { type: String, required: true, index: true },
+  senderId: { type: String, required: true },
+  senderName: { type: String, required: true },
+  message: { type: String, required: true },
+  type: { type: String, default: "text", enum: ["text", "image", "file"] },
+  timestamp: { type: Date, default: Date.now, index: true },
+  seenBy: [{ type: String }]
+}, { timestamps: true });
 
 const Chat = mongoose.model('Chat', chatSchema);
 
+// Track active users
+const activeUsers = new Map();
+
 // Socket.io connection
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  console.log('New connection:', socket.id);
 
-  socket.on('joinRoom', (roomId) => {
-    socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
-  });
-
-  socket.on('sendMessage', async (data) => {
+  // Handle joining room
+  socket.on('joinRoom', async ({ roomId, username }) => {
     try {
-      const chat = new Chat(data);
-      await chat.save();
+      socket.join(roomId);
+      activeUsers.set(socket.id, { roomId, username });
       
-      // Broadcast to room
-      io.to(data.roomId).emit('newMessage', chat);
+      // Notify others in the room
+      socket.to(roomId).emit('userJoined', { username, timestamp: new Date() });
+      
+      // Send welcome message and room info
+      const roomMessages = await Chat.find({ roomId }).sort({ timestamp: 1 }).limit(100);
+      const roomUsers = Array.from(activeUsers.values())
+        .filter(user => user.roomId === roomId)
+        .map(user => user.username);
+      
+      socket.emit('roomData', {
+        messages: roomMessages,
+        users: [...new Set(roomUsers)] // Unique usernames
+      });
+      
+      console.log(`${username} joined room ${roomId}`);
     } catch (err) {
-      console.error('Error saving message:', err);
+      console.error('Join room error:', err);
     }
   });
 
+  // Handle new messages
+  socket.on('sendMessage', async (data) => {
+    try {
+      const newMessage = new Chat({
+        roomId: data.roomId,
+        senderId: socket.id,
+        senderName: data.senderName,
+        message: data.message,
+        type: data.type || 'text'
+      });
+      
+      const savedMessage = await newMessage.save();
+      
+      // Broadcast to room
+      io.to(data.roomId).emit('newMessage', savedMessage);
+      
+      // Update seenBy
+      await Chat.updateOne(
+        { _id: savedMessage._id },
+        { $addToSet: { seenBy: socket.id } }
+      );
+    } catch (err) {
+      console.error('Message save error:', err);
+    }
+  });
+
+  // Handle typing indicator
+  socket.on('typing', ({ roomId, username }) => {
+    socket.to(roomId).emit('userTyping', username);
+  });
+
+  // Handle disconnect
   socket.on('disconnect', () => {
+    const userData = activeUsers.get(socket.id);
+    if (userData) {
+      socket.to(userData.roomId).emit('userLeft', {
+        username: userData.username,
+        timestamp: new Date()
+      });
+      activeUsers.delete(socket.id);
+    }
     console.log('User disconnected:', socket.id);
   });
 });
 
-// ===== REST API ROUTES =====
-
-// POST: Kirim pesan baru
-app.post('/chat', async (req, res) => {
+// API Routes
+app.post('/api/messages', async (req, res) => {
   try {
-    const chat = new Chat(req.body);
-    await chat.save();
-    res.status(201).json({ success: true, message: "Pesan dikirim", data: chat });
+    const message = new Chat(req.body);
+    await message.save();
+    res.status(201).json(message);
   } catch (err) {
-    res.status(500).json({ success: false, message: "Gagal kirim pesan", error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// GET: Ambil semua chat dari satu room
-app.get('/chat/:roomId', async (req, res) => {
+app.get('/api/messages/:roomId', async (req, res) => {
   try {
-    const chats = await Chat.find({ roomId: req.params.roomId }).sort({ timestamp: 1 });
-    res.json({ success: true, data: chats });
+    const messages = await Chat.find({ roomId: req.params.roomId })
+      .sort({ timestamp: -1 })
+      .limit(100);
+    res.json(messages.reverse());
   } catch (err) {
-    res.status(500).json({ success: false, message: "Gagal ambil chat", error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Serve index.html for all other routes
+app.get('/api/rooms/:roomId/users', (req, res) => {
+  const users = Array.from(activeUsers.values())
+    .filter(user => user.roomId === req.params.roomId)
+    .map(user => user.username);
+  res.json([...new Set(users)]);
+});
+
+// Serve frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Server start
+// Start server
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
