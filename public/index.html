@@ -3,25 +3,39 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Realtime Chat</title>
+  <title>Real-Time Chat</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-  <div class="chat-container">
-    <div class="header">
-      <h1>Realtime Chat</h1>
-      <div class="room-info">
-        <input type="text" id="roomId" placeholder="Room ID" value="general">
-        <input type="text" id="username" placeholder="Your Name">
-        <button id="joinBtn">Join Room</button>
+  <div class="app-container">
+    <div class="login-container" id="loginContainer">
+      <h1>Welcome to Chat</h1>
+      <div class="form-group">
+        <input type="text" id="usernameInput" placeholder="Your Name" required>
       </div>
+      <div class="form-group">
+        <input type="text" id="roomIdInput" placeholder="Room ID" value="general">
+      </div>
+      <button id="joinButton">Join Chat</button>
     </div>
-    
-    <div class="chat-box" id="chatBox"></div>
-    
-    <div class="message-input">
-      <input type="text" id="messageInput" placeholder="Type your message...">
-      <button id="sendBtn">Send</button>
+
+    <div class="chat-container" id="chatContainer" style="display: none;">
+      <div class="chat-header">
+        <h2 id="roomTitle">Room: general</h2>
+        <div class="user-count" id="userCount">1 user</div>
+      </div>
+      
+      <div class="messages-container" id="messagesContainer">
+        <div class="welcome-message">Welcome to the chat!</div>
+      </div>
+      
+      <div class="typing-indicator" id="typingIndicator"></div>
+      
+      <div class="input-area">
+        <input type="text" id="messageInput" placeholder="Type your message..." disabled>
+        <button id="sendButton" disabled><i class="fas fa-paper-plane"></i></button>
+      </div>
     </div>
   </div>
 
