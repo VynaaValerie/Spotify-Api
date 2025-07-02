@@ -14,6 +14,7 @@ if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
 }
 
 app.use(cors());
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Spotify API credentials
@@ -51,7 +52,7 @@ app.get('/api/search', async (req, res) => {
   try {
     await getSpotifyToken();
     const query = req.query.q;
-    const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {
+    const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&market=ID`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`
       }
@@ -67,7 +68,7 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/featured', async (req, res) => {
   try {
     await getSpotifyToken();
-    const response = await axios.get('https://api.spotify.com/v1/browse/featured-playlists?limit=10', {
+    const response = await axios.get('https://api.spotify.com/v1/browse/featured-playlists?limit=10&market=ID', {
       headers: {
         'Authorization': `Bearer ${accessToken}`
       }
@@ -79,6 +80,22 @@ app.get('/api/featured', async (req, res) => {
   }
 });
 
+// API endpoint to get track details
+app.get('/api/track/:id', async (req, res) => {
+  try {
+    await getSpotifyToken();
+    const response = await axios.get(`https://api.spotify.com/v1/tracks/${req.params.id}`, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    res.json(response.data);
+  } catch (error) {
+    console.error('Track details error:', error);
+    res.status(500).json({ error: 'Failed to get track details' });
+  }
+});
+
 // Serve index.html for all routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -86,5 +103,4 @@ app.get('*', (req, res) => {
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-  console.log(`Spotify Client ID: ${SPOTIFY_CLIENT_ID ? 'Configured' : 'Missing'}`);
 });
