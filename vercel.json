@@ -12,6 +12,14 @@
       "dest": "/public/$1"
     },
     {
+      "src": "/chat",
+      "dest": "server.js"
+    },
+    {
+      "src": "/chat/(.*)",
+      "dest": "server.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "server.js"
     }

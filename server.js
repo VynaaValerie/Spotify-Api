@@ -1,103 +1,111 @@
-require('dotenv').config();
-const express = require('express');
-const path = require('path');
-const axios = require('axios');
-const cors = require('cors');
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import mongoose from 'mongoose';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Setup
 const app = express();
-const port = process.env.PORT || 3000;
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
-// Check for required environment variables
-if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
-  console.error('Missing Spotify API credentials. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables.');
-  process.exit(1);
-}
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Spotify API credentials
-const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
-const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
-let accessToken = '';
-let tokenExpiration = 0;
+// MongoDB connection
+const uri = "mongodb+srv://mongoku:WMwAVIcY0LZUBtqW@pina-chan.pxlz1kb.mongodb.net/?retryWrites=true&w=majority&appName=pina-chan";
 
-// Middleware to get Spotify access token
-async function getSpotifyToken(req, res, next) {
-  if (Date.now() < tokenExpiration) return next();
+mongoose.connect(uri, {
+  dbName: 'komentar',
+}).then(() => {
+  console.log("✅ MongoDB connected");
+}).catch(err => {
+  console.error("❌ Gagal konek MongoDB:", err);
+});
 
-  try {
-    const response = await axios.post(
-      'https://accounts.spotify.com/api/token',
-      'grant_type=client_credentials',
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString('base64')}`
-        }
-      }
-    );
+// Mongoose Chat Schema
+const chatSchema = new mongoose.Schema({
+  roomId: String,
+  senderId: String,
+  senderName: String,
+  message: String,
+  type: { type: String, default: "text" },
+  timestamp: { type: Date, default: Date.now },
+  seenBy: [String]
+});
 
-    accessToken = response.data.access_token;
-    tokenExpiration = Date.now() + (response.data.expires_in * 1000);
-    next();
-  } catch (error) {
-    console.error('Error getting Spotify token:', error);
-    res.status(500).json({ error: 'Failed to authenticate with Spotify API' });
-  }
-}
+const Chat = mongoose.model('Chat', chatSchema);
 
-// API endpoint to search tracks
-app.get('/api/search', getSpotifyToken, async (req, res) => {
-  try {
-    const query = req.query.q;
-    if (!query) {
-      return res.status(400).json({ error: 'Search query is required' });
+// Socket.io connection
+io.on('connection', (socket) => {
+  console.log('A user connected:', socket.id);
+
+  socket.on('joinRoom', (roomId) => {
+    socket.join(roomId);
+    console.log(`User ${socket.id} joined room ${roomId}`);
+  });
+
+  socket.on('sendMessage', async (data) => {
+    try {
+      const chat = new Chat(data);
+      await chat.save();
+      
+      // Broadcast to room
+      io.to(data.roomId).emit('newMessage', chat);
+    } catch (err) {
+      console.error('Error saving message:', err);
     }
+  });
 
-    const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=12`, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    
-    // Filter out tracks without preview URLs
-    const tracksWithPreviews = response.data.tracks.items.filter(track => track.preview_url);
-    res.json(tracksWithPreviews);
-  } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({ error: 'Failed to search tracks' });
-  }
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
 });
 
-// API endpoint to get featured playlists
-app.get('/api/featured', getSpotifyToken, async (req, res) => {
+// ===== REST API ROUTES =====
+
+// POST: Kirim pesan baru
+app.post('/chat', async (req, res) => {
   try {
-    const response = await axios.get('https://api.spotify.com/v1/browse/featured-playlists?limit=12', {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    res.json(response.data.playlists.items);
-  } catch (error) {
-    console.error('Featured playlists error:', error);
-    res.status(500).json({ error: 'Failed to get featured playlists' });
+    const chat = new Chat(req.body);
+    await chat.save();
+    res.status(201).json({ success: true, message: "Pesan dikirim", data: chat });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal kirim pesan", error: err.message });
   }
 });
 
-// Serve index.html for all routes
+// GET: Ambil semua chat dari satu room
+app.get('/chat/:roomId', async (req, res) => {
+  try {
+    const chats = await Chat.find({ roomId: req.params.roomId }).sort({ timestamp: 1 });
+    res.json({ success: true, data: chats });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Gagal ambil chat", error: err.message });
+  }
+});
+
+// Serve index.html for all other routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send('Something broke!');
-});
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+// Server start
+httpServer.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
