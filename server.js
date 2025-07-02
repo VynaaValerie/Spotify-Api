@@ -13,6 +13,7 @@ if (!process.env.SPOTIFY_CLIENT_ID || !process.env.SPOTIFY_CLIENT_SECRET) {
   process.exit(1);
 }
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -24,8 +25,8 @@ let accessToken = '';
 let tokenExpiration = 0;
 
 // Middleware to get Spotify access token
-async function getSpotifyToken() {
-  if (Date.now() < tokenExpiration) return;
+async function getSpotifyToken(req, res, next) {
+  if (Date.now() < tokenExpiration) return next();
 
   try {
     const response = await axios.post(
@@ -41,23 +42,30 @@ async function getSpotifyToken() {
 
     accessToken = response.data.access_token;
     tokenExpiration = Date.now() + (response.data.expires_in * 1000);
+    next();
   } catch (error) {
     console.error('Error getting Spotify token:', error);
-    throw new Error('Failed to authenticate with Spotify API');
+    res.status(500).json({ error: 'Failed to authenticate with Spotify API' });
   }
 }
 
 // API endpoint to search tracks
-app.get('/api/search', async (req, res) => {
+app.get('/api/search', getSpotifyToken, async (req, res) => {
   try {
-    await getSpotifyToken();
     const query = req.query.q;
-    const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10&market=ID`, {
+    if (!query) {
+      return res.status(400).json({ error: 'Search query is required' });
+    }
+
+    const response = await axios.get(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=12`, {
       headers: {
         'Authorization': `Bearer ${accessToken}`
       }
     });
-    res.json(response.data.tracks.items);
+    
+    // Filter out tracks without preview URLs
+    const tracksWithPreviews = response.data.tracks.items.filter(track => track.preview_url);
+    res.json(tracksWithPreviews);
   } catch (error) {
     console.error('Search error:', error);
     res.status(500).json({ error: 'Failed to search tracks' });
@@ -65,10 +73,9 @@ app.get('/api/search', async (req, res) => {
 });
 
 // API endpoint to get featured playlists
-app.get('/api/featured', async (req, res) => {
+app.get('/api/featured', getSpotifyToken, async (req, res) => {
   try {
-    await getSpotifyToken();
-    const response = await axios.get('https://api.spotify.com/v1/browse/featured-playlists?limit=10&market=ID', {
+    const response = await axios.get('https://api.spotify.com/v1/browse/featured-playlists?limit=12', {
       headers: {
         'Authorization': `Bearer ${accessToken}`
       }
@@ -80,25 +87,15 @@ app.get('/api/featured', async (req, res) => {
   }
 });
 
-// API endpoint to get track details
-app.get('/api/track/:id', async (req, res) => {
-  try {
-    await getSpotifyToken();
-    const response = await axios.get(`https://api.spotify.com/v1/tracks/${req.params.id}`, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`
-      }
-    });
-    res.json(response.data);
-  } catch (error) {
-    console.error('Track details error:', error);
-    res.status(500).json({ error: 'Failed to get track details' });
-  }
-});
-
 // Serve index.html for all routes
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
 });
 
 app.listen(port, () => {
